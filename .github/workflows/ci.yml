@@ -1,0 +1,37 @@
+name: ci
+
+# This project is a west project in the com-junkawasaki/root superproject;
+# its deps reference sibling repos via :git/deps by default (see deps.edn),
+# so a plain `actions/checkout` + `clojure -M:test` (no :dev override) works
+# standalone. All siblings (kotoba-lang/langgraph, langchain,
+# langchain-store, org-chainagnostic-cacao, org-ietf-ed25519, org-ietf-cbor)
+# are PUBLIC — no token needed.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with: { cli: latest }
+      - name: clj-kondo (errors fail the build)
+        run: clojure -M:lint
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - uses: DeLaGuardo/setup-clojure@13.0
+        with: { cli: latest }
+      - name: test (CDX/WARC, policy Governor, CACAO identity, kotobase client, LLM/embeddings, StateGraph, store, loop)
+        run: clojure -M:test
