@@ -97,3 +97,7 @@ See [`docs/DESIGN.md`](docs/DESIGN.md) for the full architecture,
 [`docs/operator-guide.md`](docs/operator-guide.md) for running a real tick
 and growing the seed list, and [`docs/business-model.md`](docs/business-model.md)
 for how this fits net-kotobase/cloud-itonami's business model.
+
+## Repository ownership
+
+This repository is owned by the GitHub organization `net-kotobase` as `net-kotobase/commoncrawl-actor`. Reusable language and storage contracts remain in `kotoba-lang`.
