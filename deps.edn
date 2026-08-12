@@ -20,18 +20,20 @@
          :git/sha "58144e81ccdf7a82367085c66ea21ca84a1a7ddb"}}
  :aliases
  {;; Monorepo-local dev/test — resolve every sibling from the west-managed
-  ;; sibling checkouts once this repo lives at orgs/kotoba-lang/
-  ;; kotobase-commoncrawl-actor (the same layout gftd-talent-actor's :dev
-  ;; alias and org-chainagnostic-cacao's :local alias both use).
+  ;; sibling checkouts. This repo lives at orgs/net-kotobase/commoncrawl-actor
+  ;; since the 2026-08 transfer, while every sibling below is still a
+  ;; kotoba-lang project — so these are ../../kotoba-lang/<name>, not ../<name>
+  ;; (the same layout gftd-talent-actor's :dev alias and
+  ;; org-chainagnostic-cacao's :local alias both use).
   :dev {:override-deps
-        {io.github.kotoba-lang/langgraph              {:local/root "../langgraph"}
-         io.github.kotoba-lang/langchain-store         {:local/root "../langchain-store"}
-         io.github.kotoba-lang/org-chainagnostic-cacao {:local/root "../org-chainagnostic-cacao"}
-         io.github.kotoba-lang/org-ietf-ed25519        {:local/root "../org-ietf-ed25519"}
-         io.github.kotoba-lang/org-ietf-cbor           {:local/root "../org-ietf-cbor"}
+        {io.github.kotoba-lang/langgraph              {:local/root "../../kotoba-lang/langgraph"}
+         io.github.kotoba-lang/langchain-store         {:local/root "../../kotoba-lang/langchain-store"}
+         io.github.kotoba-lang/org-chainagnostic-cacao {:local/root "../../kotoba-lang/org-chainagnostic-cacao"}
+         io.github.kotoba-lang/org-ietf-ed25519        {:local/root "../../kotoba-lang/org-ietf-ed25519"}
+         io.github.kotoba-lang/org-ietf-cbor           {:local/root "../../kotoba-lang/org-ietf-cbor"}
          ;; langchain is langgraph's own transitive dep; pin the same local
          ;; checkout so the whole graph resolves from one workspace.
-         io.github.kotoba-lang/langchain                {:local/root "../langchain"}}}
+         io.github.kotoba-lang/langchain                {:local/root "../../kotoba-lang/langchain"}}}
   ;; clojure -M:dev:run  → drive one offline dry-run tick through the actor
   :run {:main-opts ["-m" "commoncrawl.sim"]}
   :test {:extra-paths ["test"]
