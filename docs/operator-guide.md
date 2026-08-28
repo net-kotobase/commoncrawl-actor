@@ -61,15 +61,14 @@ Subsequent runs reuse the same identity/DID.
 `COMMONCRAWL_MURAKUMO_TOKEN` authenticates against `api.murakumo.cloud`'s
 `/v1/messages` and `/v1/embeddings` (both gated by the same bearer-token
 check). Skill `secrets-location-map` in the parent workspace documents this
-as kagi item `MURAKUMO_CRITIC_TOKEN` (compartment `gftdcojp`) or 1Password
-`gftd.murakumo/ANTHROPIC_PROXY_TOKEN` — as of this writing the kagi item was
-**not actually present** in the local vault this repo's initial
-implementation session had access to (1Password required interactive auth
-this session couldn't perform either), so the LLM-extraction/embeddings
-leg was not live-verified end-to-end — see "Live verification status"
-below. If you have `bin/kagi` available and the item exists in your vault,
-set `KAGI_BIN=/path/to/kagi` and `commoncrawl.live-http` will fetch the
-token itself.
+as kagi item `MURAKUMO_CRITIC_TOKEN` (compartment `gftdcojp`). **Present and
+working as of 2026-08-28** (`KAGI_HOME=$HOME/.kagi <kagi bin> get
+MURAKUMO_CRITIC_TOKEN`) — the 2026-07-19 note below that it was absent
+described that session's vault access, not a standing gap. If you have
+`bin/kagi` available and the item exists in your vault, set
+`KAGI_BIN=/path/to/kagi` and `commoncrawl.live-http` will fetch the token
+itself for a manual run; the scheduled path (see "Scheduling" below) reads
+it from a plain file instead, since kagi cannot run under launchd.
 
 ## Live verification status (2026-07-19, initial implementation)
 
@@ -104,6 +103,53 @@ What was actually proven against PRODUCTION services in this session
   (`test/nbb_smoke.cljs`) against mocked responses — re-run
   `bin/tick.cljs` with a working token to complete this leg's live
   verification.
+
+## Current status (2026-08-28) — read this before assuming anything above is stale
+
+Two things landed since 2026-07-19: the Iceberg sync (`commoncrawl.iceberg` /
+`commoncrawl.live-iceberg`, see "Iceberg sync" above and `docs/DESIGN.md`)
+and real scheduling (`bin/scheduled.cljs` + the LaunchAgent, see
+"Scheduling" below). Both are now live-verified for their own mechanics,
+but **no page has ever actually reached `:commit` since this actor was
+built**, so the full chain (fetch real content → advise with a real LLM →
+govern → commit → Iceberg sync) has never been proven end to end. This is
+not a code gap — it is one external outage:
+
+- **Common Crawl's CDX index (`index.commoncrawl.org`) is down.** Every
+  fetch this actor has attempted since (at least) 2026-08-28 gets
+  `curl: (52) Empty reply from server` — confirmed repeatedly, at
+  different times of day, across multiple seeds. `commoncrawl.org` and
+  `data.commoncrawl.org` both respond normally, so this is specific to the
+  index subdomain, upstream, not this workspace's network. There is
+  nothing to fix here except wait and re-check.
+- **Consequently**: every tick since has HELD on `:fetch-miss`, the
+  `net_kotobase.commoncrawl_page` Iceberg table has never been created
+  (confirmed absent via `iceberg_append.py --count` as of 2026-08-28), and
+  the `:advise` LLM/embeddings leg above is *still* not live-verified —
+  not because the token is missing (it now works, see "Auth token" above,
+  and `~/.gftd/commoncrawl-actor-murakumo-token` supplies it to every
+  scheduled tick automatically), but because no page has ever reached that
+  step with real content.
+- **What IS proven live on 2026-08-28**: `bin/scheduled.cljs`, run for
+  real by launchd (not by hand), resolved both credentials non-interactively
+  and completed a full tick with exit 0 (`launchctl print` showed
+  `last exit code = 0`) — the scheduling and credential-resolution
+  machinery works; only the upstream fetch is blocked. A separate smoke
+  test appended, read back, and dropped a throwaway row in the real
+  `net-kotobase-datalake` catalog, proving the Iceberg write path itself
+  works independently of this actor's fetch pipeline.
+
+**Resume point for whoever picks this up next**: check whether
+`index.commoncrawl.org` answers again
+(`curl -sS -o /dev/null -w '%{http_code}\n' https://index.commoncrawl.org/collinfo.json`).
+Once it does, the hourly schedule needs no further action — the next tick
+that gets a real capture will commit a real page, create
+`net_kotobase.commoncrawl_page` on first write, populate
+`extracted_category`/`extracted_summary`/`extracted_entities`/`embedding`
+for the first time, and complete this section's live verification. If it
+still doesn't answer after a few days, that is itself worth escalating
+(a Common Crawl outage this long would be unusual) rather than continuing
+to assume it is transient.
 
 ## Growing the seed list
 
