@@ -84,3 +84,48 @@
         summary (loop/tick! {:store st :actor actor :seeds five-seeds :budget-cap 3 :owner "o" :now-ms (constantly 1000)})]
     (is (= 0 (:committed summary)))
     (is (= 3 (:held summary)))))
+
+(deftest iceberg-sync-is-disabled-by-default-but-still-reported
+  (let [st (store/mem-store)
+        actor (mock-actor)
+        summary (loop/tick! {:store st :actor actor :seeds five-seeds :budget-cap 2
+                             :owner "o" :now-ms (constantly 1000)})]
+    (is (= 2 (:committed summary)))
+    (is (true? (get-in summary [:iceberg :ok?])))
+    (is (true? (get-in summary [:iceberg :disabled?])))
+    (is (= 2 (get-in summary [:iceberg :attempted]))
+        "the default no-op sync-fn is still called with every committed row this tick")))
+
+(deftest iceberg-sync-fn-receives-one-batch-of-only-the-committed-rows
+  (let [st (store/mem-store)
+        actor (op/build (store/mem-store)
+                        {:advise-fn (constantly {:category "c" :summary "s" :entities [] :confidence 0.9})
+                         :fetch-fn (constantly nil) ;; every fetch misses -> every seed holds
+                         :ingest-fn (constantly {:ok true})})
+        calls (atom [])
+        sync-fn (fn [rows] (swap! calls conj rows) {:ok? true :appended (count rows)})
+        summary (loop/tick! {:store st :actor actor :seeds five-seeds :budget-cap 3
+                             :owner "o" :now-ms (constantly 1000) :iceberg-sync-fn sync-fn})]
+    (is (= 0 (:committed summary)))
+    (is (= [] @calls)
+        "a tick that holds every seed must not call the sync-fn at all -- zero rows is not a batch")
+    (is (= {:ok? true :attempted 0 :appended 0} (:iceberg summary)))))
+
+(deftest iceberg-sync-fn-batches-across-the-whole-tick-not-per-seed
+  (let [st (store/mem-store)
+        actor (mock-actor)
+        calls (atom [])
+        sync-fn (fn [rows] (swap! calls conj rows) {:ok? true :appended (count rows)})
+        summary (loop/tick! {:store st :actor actor :seeds five-seeds :budget-cap 3
+                             :owner "o" :now-ms (constantly 1000) :iceberg-sync-fn sync-fn})]
+    (is (= 3 (:committed summary)))
+    (is (= 1 (count @calls)) "one Iceberg commit per tick, not one per page")
+    (is (= 3 (count (first @calls))))
+    (is (= {:ok? true :appended 3 :attempted 3} (:iceberg summary)))))
+
+(deftest results-persisted-to-the-store-never-carry-page-state
+  (let [st (store/mem-store)
+        actor (mock-actor)]
+    (loop/tick! {:store st :actor actor :seeds five-seeds :budget-cap 1 :owner "o" :now-ms (constantly 1000)})
+    (is (every? #(= #{:seed :disposition} (set (keys %))) (:results (first (store/tick-log st))))
+        "the persisted tick log must not become a second copy of page text/embeddings")))

@@ -66,13 +66,31 @@ intake -> fetch -> advise -> govern -> decide -> commit | hold
   approval node in this actor — see `commoncrawl.operation`'s docstring);
   only a clean, in-scope, confident proposal reaches **commit**, which
   self-mints a CACAO (`commoncrawl.identity`) and calls net-kotobase's
-  `web.ingest` (`commoncrawl.kotobase`).
+  `web.ingest` (`commoncrawl.kotobase`), then mirrors the same committed
+  page into an Iceberg table in Cloudflare R2 Data Catalog — see
+  "Iceberg projection" below.
 
 Every network/gzip capability (`http-fn`/`warc-fetch-fn`/`complete-fn`/
 `embed-fn`) is injected — the entire core above is offline-testable against
-canned fixtures. The **only** namespace doing real IO is
-`commoncrawl.live-http` (nbb-only, `.cljs`, per this workspace's runtime
-priority), used by the live entry point `bin/tick.cljs`.
+canned fixtures. Real IO lives in exactly two nbb-only `.cljs` namespaces:
+`commoncrawl.live-http` (network/gzip) and `commoncrawl.live-iceberg` (the
+Iceberg catalog commit), both used by the live entry point `bin/tick.cljs`.
+
+## Iceberg projection: net-kotobase stays the premise
+
+Every tick also appends its committed pages to
+`net_kotobase.commoncrawl_page`, an Apache Iceberg table in Cloudflare R2
+Data Catalog (bucket `net-kotobase-datalake`) — one batched commit per
+tick, built from rows `commoncrawl.iceberg` shapes and written by
+`commoncrawl.live-iceberg` via the vendored `scripts/iceberg_append.py`
+(same script `cloud-itonami/otent` uses for its own tables). This is a
+PROJECTION, not a second source of truth: net-kotobase's `web.ingest` is
+still the only write the governed graph performs, and the table can be
+dropped and rebuilt from this actor's own ledger plus a re-fetch from
+Common Crawl (superproject ADR-2608039700's "delete and rebuild" test).
+Its own success/failure never affects a page's `:disposition` — see
+`docs/DESIGN.md`'s "The Iceberg projection" section for the full rationale,
+and `docs/operator-guide.md` for the `CF_CATALOG_TOKEN` it needs.
 
 ## Quickstart
 
@@ -80,16 +98,20 @@ priority), used by the live entry point `bin/tick.cljs`.
 # offline demo (no network, no deps beyond deps.edn's :dev alias)
 clojure -M:dev:run
 
-# tests (CDX/WARC, Governor, CACAO identity, kotobase client, LLM/embeddings, StateGraph, store, loop)
+# tests (CDX/WARC, Governor, CACAO identity, kotobase client, LLM/embeddings,
+# Iceberg row-shaping, StateGraph, store, loop)
 clojure -M:dev:test
 
 # lint
 clojure -M:lint
 
 # a REAL tick (mints its own CACAO, fetches from Common Crawl, calls murakumo,
-# and ingests into production kotobase.net — see docs/operator-guide.md)
-COMMONCRAWL_MURAKUMO_TOKEN=<token> \
-  nbb --classpath "src:../langgraph/src:../langchain/src:../langchain-store/src:../org-chainagnostic-cacao/src:../org-ietf-ed25519/src:../org-ietf-cbor/src" \
+# ingests into production kotobase.net, and mirrors into R2 Data Catalog if
+# CF_CATALOG_TOKEN is set — see docs/operator-guide.md). Sibling paths are
+# ../../kotoba-lang/<name>, not ../<name> — this repo moved orgs in 2026-08
+# while its siblings stayed under kotoba-lang (see deps.edn's :dev alias).
+COMMONCRAWL_MURAKUMO_TOKEN=<token> CF_CATALOG_TOKEN=<token> \
+  nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src:../../kotoba-lang/langchain-store/src:../../kotoba-lang/org-chainagnostic-cacao/src:../../kotoba-lang/org-ietf-ed25519/src:../../kotoba-lang/org-ietf-cbor/src:../../kotoba-lang/authority/src" \
   bin/tick.cljs --budget 1
 ```
 

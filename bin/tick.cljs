@@ -12,11 +12,16 @@
 ;; Env:
 ;;   COMMONCRAWL_MURAKUMO_TOKEN or KAGI_BIN  — murakumo /v1/messages + /v1/embeddings auth
 ;;   (see commoncrawl.live-http/murakumo-token)
+;;   CF_CATALOG_TOKEN  — Cloudflare R2 Data Catalog token (this tick's ONLY
+;;   optional capability: absent/empty degrades this tick's `:iceberg`
+;;   summary to {:ok? false :error :could-not-answer ...}, it never blocks
+;;   or holds a page's net-kotobase ingest — see commoncrawl.live-iceberg)
 (require '[commoncrawl.cdx :as cdx]
          '[commoncrawl.embeddings :as embeddings]
          '[commoncrawl.identity :as identity]
          '[commoncrawl.kotobase :as kotobase]
          '[commoncrawl.live-http :as net]
+         '[commoncrawl.live-iceberg :as live-iceberg]
          '[commoncrawl.llm :as llm]
          '[commoncrawl.loop :as loop]
          '[commoncrawl.operation :as op]
@@ -63,10 +68,13 @@
                             :collection-id collection-id})
 
         summary (loop/tick! {:store st :actor actor :seeds seeds
-                             :budget-cap budget-cap :owner (str "tick-" (identity/now-ms))})]
+                             :budget-cap budget-cap :owner (str "tick-" (identity/now-ms))
+                             :collection-id collection-id
+                             :iceberg-sync-fn live-iceberg/sync-fn})]
     (println "actor DID:" (:did id))
     (println "collection:" collection-id)
     (println (pr-str summary))
+    (println "iceberg sync:" (pr-str (:iceberg summary)))
     (when-not (:skipped summary)
       (println "\n── this tick's ledger entries ──")
       (doseq [f (take-last (:attempted summary 0) (store/ledger st))]
