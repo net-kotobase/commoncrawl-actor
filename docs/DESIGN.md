@@ -33,6 +33,7 @@ LLM into a single `:advise` node and wraps it with an independent
 | `commoncrawl.live-http` | the ONLY ns doing real network/gzip IO (nbb-only, `.cljs`) |
 | `commoncrawl.iceberg` | row-shaping for the Iceberg projection (pure) |
 | `commoncrawl.live-iceberg` | the Iceberg catalog commit (nbb-only, `.cljs`) |
+| `bin/scheduled.cljs` | the launchd entry point — resolves both live credentials, then runs `bin/tick.cljs` |
 
 ## The injection boundary
 

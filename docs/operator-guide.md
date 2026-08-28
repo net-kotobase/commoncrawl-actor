@@ -121,9 +121,40 @@ seed-scope/exclude checks.
 ## Scheduling
 
 This actor is designed to be invoked by a scheduler, not run as an
-always-on process — e.g. the `schedule` skill's cron-based routine, or any
-external cron calling `bin/tick.cljs`. A reasonable starting cadence is
-hourly or daily with `--budget 1`–`3`.
+always-on process. As of 2026-08-28, `bin/scheduled.cljs` + the LaunchAgent
+`net-kotobase.commoncrawl-actor-tick` (`ops/net-kotobase.commoncrawl-actor-tick.plist`)
+is the live implementation of that design — before this, the actor had only
+ever been run by hand.
+
+`bin/scheduled.cljs` resolves both real credentials the way a LaunchAgent
+actually can (neither `kagi` nor an interactive Keychain prompt is
+available under launchd — see the ns docstring):
+
+- `CF_CATALOG_TOKEN` from the Keychain, `gftd.cf`/`API_TOKEN`.
+- `COMMONCRAWL_MURAKUMO_TOKEN` from `~/.gftd/commoncrawl-actor-murakumo-token`
+  (mode 600 — write the value of kagi item `MURAKUMO_CRITIC_TOKEN` there
+  once: `KAGI_HOME=$HOME/.kagi <kagi bin> get MURAKUMO_CRITIC_TOKEN >
+  ~/.gftd/commoncrawl-actor-murakumo-token && chmod 600 ~/.gftd/commoncrawl-actor-murakumo-token`).
+
+Neither credential's absence stops a tick — see the ns docstring for why
+that's safe — so install without either present if needed and backfill
+later; the tick just logs a `WARN` per missing one.
+
+```bash
+cp ops/net-kotobase.commoncrawl-actor-tick.plist ~/Library/LaunchAgents/
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/net-kotobase.commoncrawl-actor-tick.plist
+tail -40 /tmp/commoncrawl-actor-tick.log   # watch
+launchctl bootout gui/$(id -u)/net-kotobase.commoncrawl-actor-tick   # stop
+```
+
+Cadence is hourly, `--budget 1` (override with `COMMONCRAWL_TICK_BUDGET`).
+The plist carries no logic — edit `bin/scheduled.cljs` instead, since
+`launchctl` needs a bootout/bootstrap cycle on every plist change.
+
+If you'd rather use a different scheduler (the `schedule` skill's
+cron-based routine, or any external cron), point it at `bin/scheduled.cljs`
+too, not `bin/tick.cljs` directly, unless that scheduler already supplies
+both env vars itself.
 
 ## Reviewing what happened
 
