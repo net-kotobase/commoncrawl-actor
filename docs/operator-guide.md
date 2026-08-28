@@ -8,9 +8,16 @@ embeddings, and ingests into **production** `kotobase.net`. Run it from a
 workspace where the sibling `.cljc` deps are checked out next to this repo
 (the standard west layout, `orgs/kotoba-lang/*`):
 
+Sibling paths are `../../kotoba-lang/<name>`, not `../<name>` — this repo
+moved to the `net-kotobase` org in 2026-08 while every sibling below
+stayed under `kotoba-lang` (see `deps.edn`'s `:dev` alias comment).
+`authority` is needed transitively (`org-chainagnostic-cacao` requires
+`authority.scope`) even though nothing in this repo requires it directly.
+
 ```bash
 COMMONCRAWL_MURAKUMO_TOKEN=<murakumo /v1/messages+/v1/embeddings bearer token> \
-  nbb --classpath "src:../langgraph/src:../langchain/src:../langchain-store/src:../org-chainagnostic-cacao/src:../org-ietf-ed25519/src:../org-ietf-cbor/src" \
+CF_CATALOG_TOKEN=<Cloudflare R2 Data Catalog token, see below> \
+  nbb --classpath "src:../../kotoba-lang/langgraph/src:../../kotoba-lang/langchain/src:../../kotoba-lang/langchain-store/src:../../kotoba-lang/org-chainagnostic-cacao/src:../../kotoba-lang/org-ietf-ed25519/src:../../kotoba-lang/org-ietf-cbor/src:../../kotoba-lang/authority/src" \
   bin/tick.cljs --budget 1
 ```
 
@@ -22,6 +29,28 @@ Flags:
   `.commoncrawl/store.edn`, gitignored).
 - `--db-name NAME` — the net-kotobase tenant database name pages are
   ingested into (default `webpages`, matching `web.ingest`'s own default).
+
+### Iceberg sync (R2 Data Catalog) — optional, degrades independently
+
+Every committed page is also mirrored into `net_kotobase.commoncrawl_page`
+(Cloudflare R2 Data Catalog, bucket `net-kotobase-datalake`) — see
+`docs/DESIGN.md`'s "The Iceberg projection" section for why this is safe
+to skip. Needs:
+
+- `CF_CATALOG_TOKEN` — a Cloudflare API token with **both**
+  `R2 Data Catalog: Edit` and `Workers R2 Storage: Edit` (skill
+  `secrets-location-map`, `references/cloudflare.md`: the Keychain item
+  `gftd.cf`/`API_TOKEN` already carries both).
+- `python3` on PATH with `pyiceberg` + `pyarrow` installed (this is the
+  ONLY non-nbb runtime dependency in this whole repo — see
+  `scripts/iceberg_append.py`'s own docstring for why: nbb has no Iceberg
+  writer).
+
+If `CF_CATALOG_TOKEN` is absent, every tick's `:iceberg` field reports
+`{:ok? false :error :could-not-answer ...}` — the tick and its
+net-kotobase ingest still complete normally; only the Iceberg mirror is
+skipped for that tick (nothing queues or retries — the next tick's own
+rows simply append on top once the token is present again).
 
 The first run creates `.commoncrawl/identity.edn` (a fresh Ed25519 seed +
 its derived `did:key`) — **never commit this file or this directory.**

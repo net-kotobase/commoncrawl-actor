@@ -25,8 +25,21 @@
       so a retried/resumed tick (same `tick-id` passed back in) doesn't
       exceed the original budget even across a crash+retry.
     - `:agent.tick/*`       — an append-only per-tick summary log,
-      separate from the commit/hold decision ledger."
-  (:require [commoncrawl.operation :as op]
+      separate from the commit/hold decision ledger.
+
+  Also drives the OPTIONAL, SECOND `:iceberg-sync-fn` capability
+  (`commoncrawl.iceberg`/`commoncrawl.live-iceberg`): after the seed loop
+  finishes, whatever committed this tick is shaped into Iceberg rows and
+  handed to one batched sync call — never per-seed, so a 3-page tick makes
+  one Iceberg commit, not three. Net-kotobase (`:ingest-fn`, inside
+  `commoncrawl.operation`'s graph) remains the only write the GOVERNED
+  graph itself performs; the Iceberg sync happens strictly after, on
+  already-committed data, and its own success/failure never changes a
+  seed's `:disposition` or is written to the decision ledger — see
+  `commoncrawl.iceberg`'s ns docstring for why it is a projection rather
+  than a second premise."
+  (:require [commoncrawl.iceberg :as iceberg]
+            [commoncrawl.operation :as op]
             [commoncrawl.seeds :as seeds]
             [commoncrawl.store :as store]))
 
@@ -62,19 +75,37 @@
     :now-ms         injectable clock (default: commoncrawl.identity/now-ms
                     — passed in here so tests are deterministic without an
                     extra require cycle; see test/commoncrawl/loop_test.cljc)
+    :collection-id  the CC collection id this tick's `actor` was built
+                    against, threaded into each Iceberg row's
+                    `collection_id` column (default nil — omitted from the
+                    row rather than guessed)
+    :iceberg-sync-fn (fn [rows] -> {:ok? ...}), the batched Iceberg append
+                    capability (default `commoncrawl.iceberg/default-sync-fn`,
+                    i.e. disabled — see that fn's docstring)
 
   Returns {:skipped :lease-held} if another owner currently holds the
   lease, else a tick summary map (also appended to `store`'s tick log via
   `commoncrawl.store/append-tick!`):
     {:tick-id :attempted :committed :held :budget-used :budget-cap
-     :results [{:seed :disposition} ...]}."
-  [{:keys [store actor seeds exclude budget-cap lease-id lease-ttl-ms owner tick-id now-ms]
+     :results [{:seed :disposition} ...] :iceberg {:ok? :attempted ...}}.
+
+  `:results` never carries the full page/proposal/embedding state — only
+  `:seed`/`:disposition`, same shape as before this fn grew Iceberg sync —
+  because `:results` is what `store/append-tick!` persists into this
+  actor's OWN bookkeeping store, and that store must not become a third
+  copy of page text/embeddings (net-kotobase and the Iceberg table are
+  already two; see `commoncrawl.iceberg`'s ns docstring). The richer
+  per-seed state used to build Iceberg rows is discarded once this fn
+  returns."
+  [{:keys [store actor seeds exclude budget-cap lease-id lease-ttl-ms owner tick-id now-ms
+           collection-id iceberg-sync-fn]
     :or {exclude #{}
          budget-cap default-budget-cap
          lease-id default-lease-id
          lease-ttl-ms default-lease-ttl-ms
          owner (str "commoncrawl-" #?(:clj (.hashCode (Thread/currentThread)) :cljs (js/Math.floor (* (js/Math.random) 1e9))))
-         now-ms (fn [] #?(:clj (System/currentTimeMillis) :cljs (js/Date.now)))}}]
+         now-ms (fn [] #?(:clj (System/currentTimeMillis) :cljs (js/Date.now)))
+         iceberg-sync-fn iceberg/default-sync-fn}}]
   (let [seeds (or seeds (seeds/load-seeds))
         now (now-ms)
         tick-id (or tick-id (str "tick-" now))]
@@ -86,7 +117,7 @@
               remaining (max 0 (- budget-cap used0))
               cursor0 (store/cursor store)
               idxs (next-indices cursor0 remaining n)
-              results
+              raw-results
               (vec
                (for [i idxs
                      :let [seed (-> (nth seeds i) (select-keys [:domain :url]))
@@ -95,14 +126,19 @@
                            run (op/run-seed! actor seed context)]]
                  (do
                    (store/record-fetch! store tick-id)
-                   {:seed seed :disposition (get-in run [:state :disposition])})))
+                   {:seed seed :disposition (get-in run [:state :disposition]) :state (:state run)})))
+              results (mapv #(dissoc % :state) raw-results)
               committed (count (filter #(= :commit (:disposition %)) results))
               held (count (filter #(= :hold (:disposition %)) results))
               used-final (store/tick-budget-used store tick-id)
+              iceberg-rows (iceberg/rows-for-tick raw-results now collection-id)
+              iceberg-summary (if (seq iceberg-rows)
+                                 (assoc (iceberg-sync-fn iceberg-rows) :attempted (count iceberg-rows))
+                                 {:ok? true :attempted 0 :appended 0})
               summary {:t :tick-summary :tick-id tick-id :started-at now
                        :attempted (count results) :committed committed :held held
                        :budget-used used-final :budget-cap budget-cap
-                       :results results}]
+                       :results results :iceberg iceberg-summary}]
           (when (seq idxs) (store/advance-cursor! store (mod (inc (last idxs)) (max 1 n))))
           (store/append-tick! store summary)
           summary)

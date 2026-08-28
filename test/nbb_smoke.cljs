@@ -16,8 +16,10 @@
 (require '[commoncrawl.cdx :as cdx]
          '[commoncrawl.embeddings :as embeddings]
          '[commoncrawl.extract :as extract]
+         '[commoncrawl.iceberg :as iceberg]
          '[commoncrawl.identity :as identity]
          '[commoncrawl.kotobase :as kotobase]
+         '[commoncrawl.live-iceberg :as live-iceberg]
          '[commoncrawl.llm :as llm]
          '[commoncrawl.loop :as loop]
          '[commoncrawl.operation :as op]
@@ -110,6 +112,19 @@
 (def tick-summary (loop/tick! {:store (store/mem-store) :actor actor :seeds demo-seeds
                                :budget-cap 1 :owner "nbb-smoke" :now-ms (constantly 1000)}))
 (check! :loop-tick-committed (= 1 (:committed tick-summary)))
+(check! :loop-tick-iceberg-disabled-by-default (true? (get-in tick-summary [:iceberg :disabled?])))
+
+;; ── iceberg row-shaping + live-iceberg module load (no real subprocess) ──
+(check! :iceberg-ns-loads-under-nbb (= "commoncrawl_page" iceberg/table))
+(check! :live-iceberg-ns-loads-under-nbb (some? live-iceberg/sync-fn))
+(def iceberg-tick-summary
+  (loop/tick! {:store (store/mem-store) :actor actor :seeds demo-seeds :budget-cap 1
+              :owner "nbb-smoke-iceberg" :now-ms (constantly 1000) :collection-id "CC-MAIN-2026-25"
+              :iceberg-sync-fn (fn [rows] {:ok? true :appended (count rows) :captured rows})}))
+(check! :loop-tick-iceberg-batches-committed-rows
+        (and (= 1 (get-in iceberg-tick-summary [:iceberg :appended]))
+             (= "https://www.gleif.org/" (get (first (get-in iceberg-tick-summary [:iceberg :captured])) "url"))
+             (= "CC-MAIN-2026-25" (get (first (get-in iceberg-tick-summary [:iceberg :captured])) "collection_id"))))
 
 (println (pr-str @checks))
 (if (every? true? (vals @checks))
