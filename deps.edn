@@ -8,7 +8,7 @@
          :git/sha "6daa48e7bf86acc13d44804104fced4938530fd2"}
         io.github.kotoba-lang/langchain-store
         {:git/url "https://github.com/kotoba-lang/langchain-store.git"
-         :git/sha "2615e5213711945491a1b1c953625943c4ea83e1"}
+         :git/sha "8f50866c060d3d35bcc587c9c4a3a89fda741693"}
         io.github.kotoba-lang/org-chainagnostic-cacao
         {:git/url "https://github.com/kotoba-lang/org-chainagnostic-cacao.git"
          :git/sha "7c880cbe8757fbde3bc5b4c5d6943f15378b1305"}
